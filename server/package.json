@@ -2,10 +2,11 @@
   "name": "@church/server",
   "version": "1.0.0",
   "description": "Backend API for Church Service Management System with Supabase & Prisma",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc && prisma generate",
+    "build": "prisma generate && tsc",
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
