@@ -1,0 +1,555 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// Enums
+// ----------------------------------------------------
+
+enum Role {
+  SERVANT
+  ASSISTANT_SECRETARY
+  STAGE_SECRETARY
+  SECTOR_SECRETARY
+  GENERAL_SECRETARY
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  TRANSFERRED
+}
+
+enum ScopeType {
+  ORGANIZATION
+  SECTOR
+  STAGE
+  SELF
+}
+
+enum FollowUpTargetType {
+  SERVANT
+  SERVED_MEMBER
+}
+
+enum FollowUpItemType {
+  MASS
+  PREPARATION
+  SERVICE
+  VISITATION
+  SERVICE_MEETING
+  PRAYER_MEETING
+  ACTIVITIES
+  SECRETARIES_MEETING
+  STAGE_SECRETARIES_MEETING
+}
+
+enum PrepStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  NEEDS_REVISION
+}
+
+enum YearPlanCategory {
+  CURRICULUM
+  TRIP
+  CONFERENCE
+  ACTIVITY
+  MEETING
+  OTHER
+}
+
+// ----------------------------------------------------
+// Organizational Structure
+// ----------------------------------------------------
+
+model Sector {
+  id                 String    @id @default(uuid())
+  name               String    @unique
+  description        String?
+  generalSecretaryId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  stages             Stage[]
+  users              User[]
+
+  @@map("sectors")
+}
+
+model Stage {
+  id          String   @id @default(uuid())
+  name        String
+  sectorId    String
+  description String?
+  genderSplit String   @default("ALL") // ALL, BOYS, GIRLS
+  orderIndex  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sector      Sector   @relation(fields: [sectorId], references: [id], onDelete: Cascade)
+  users       User[]
+  members     ServedMember[]
+  preparations LessonPrep[]
+
+  @@unique([sectorId, name])
+  @@map("stages")
+}
+
+// ----------------------------------------------------
+// User / Servant Profile
+// ----------------------------------------------------
+
+model User {
+  id                   String        @id @default(uuid())
+  phone                String        @unique
+  email                String?       @unique
+  passwordHash         String
+  fullName             String
+  fatherConfessor      String?
+  dateOfBirth          DateTime?
+  address              String?
+  maritalStatus        String?       // SINGLE, ENGAGED, MARRIED
+  spouseName           String?
+  educationCareerStage String?       // STUDYING, MILITARY_SERVICE, GRADUATED, WORKING
+  childrenJson         Json?         // [{ name, age }]
+  role                 Role          @default(SERVANT)
+  status               AccountStatus @default(ACTIVE)
+
+  stageId              String?
+  stage                Stage?        @relation(fields: [stageId], references: [id], onDelete: SetNull)
+
+  sectorId             String?
+  sector               Sector?       @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  // Evaluations received and given
+  receivedEvaluations  ServantEvaluativeRecord[] @relation("ServantEvaluations")
+  givenEvaluations     ServantEvaluativeRecord[] @relation("EvaluatorRecords")
+
+  // Assigned served members
+  assignedMemberships  MemberServantAssignment[]
+  memberEvaluations    MemberEvaluativeRecord[]  @relation("ServantMemberEvaluations")
+
+  // Lesson Preps
+  lessonPreps          LessonPrep[]              @relation("AuthorPreps")
+  reviewedPreps        LessonPrep[]              @relation("ReviewerPreps")
+
+  // Private Spiritual Life (Isolated zero-leak)
+  spiritualEntries     SpiritualLifeEntry[]
+
+  // Year Plan
+  createdPlanItems     YearPlanItem[]            @relation("AuthorPlanItems")
+  planSignups          YearPlanSignup[]
+
+  // Notes
+  receivedNotes        PrivateNote[]             @relation("SubjectNotes")
+  authoredNotes        PrivateNote[]             @relation("AuthorNotes")
+
+  // Polls & Announcements
+  createdPolls         Poll[]
+  pollVotes            PollVote[]
+  authoredAnnouncements Announcement[]          @relation("AuthorAnnouncements")
+  readAnnouncements    AnnouncementRead[]
+
+  // Notifications & Audit
+  notifications        Notification[]
+  auditLogs            AuditLog[]                @relation("ActorAuditLogs")
+  transferHistories    TransferHistory[]         @relation("TargetUserTransfers")
+  performedTransfers   TransferHistory[]         @relation("AdminUserTransfers")
+
+  @@index([role, stageId, sectorId])
+  @@map("users")
+}
+
+model ServantEvaluativeRecord {
+  id                   String   @id @default(uuid())
+  servantId            String
+  evaluatorId          String
+  financialStatus      String?  // Evaluative notes/status
+  behaviorWithServed   String?
+  behaviorWithServants String?
+  cooperation          String?
+  individualWork       String?
+  periodNotes          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  servant              User     @relation("ServantEvaluations", fields: [servantId], references: [id], onDelete: Cascade)
+  evaluator            User     @relation("EvaluatorRecords", fields: [evaluatorId], references: [id], onDelete: Cascade)
+
+  @@index([servantId, evaluatorId])
+  @@map("servant_evaluative_records")
+}
+
+model TransferHistory {
+  id            String   @id @default(uuid())
+  userId        String
+  adminId       String
+  actionType    String   // TRANSFER or SUSPENSION or REACTIVATION
+  fromStageId   String?
+  toStageId     String?
+  fromSectorId  String?
+  toSectorId    String?
+  previousStatus String?
+  newStatus     String?
+  reason        String?
+  createdAt     DateTime @default(now())
+
+  user          User     @relation("TargetUserTransfers", fields: [userId], references: [id], onDelete: Cascade)
+  admin         User     @relation("AdminUserTransfers", fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("transfer_histories")
+}
+
+// ----------------------------------------------------
+// Served Member (المخدوم)
+// ----------------------------------------------------
+
+model ServedMember {
+  id               String   @id @default(uuid())
+  fullName         String
+  fatherConfessor  String?
+  dateOfBirth      DateTime?
+  address          String?
+  phone            String?
+  fatherName       String?
+  fatherAge        Int?
+  motherName       String?
+  motherAge        Int?
+  schoolUniversity String?
+  educationalStage String?
+  siblingsJson     Json?    // [{ name, age }]
+  stageId          String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  stage            Stage    @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  assignments      MemberServantAssignment[]
+  evaluations      MemberEvaluativeRecord[]
+
+  @@index([stageId, fullName])
+  @@map("served_members")
+}
+
+model MemberServantAssignment {
+  id             String       @id @default(uuid())
+  memberId       String
+  servantId      String
+  assignedAt     DateTime     @default(now())
+
+  member         ServedMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  servant        User         @relation(fields: [servantId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, servantId])
+  @@map("member_servant_assignments")
+}
+
+model MemberEvaluativeRecord {
+  id                    String       @id @default(uuid())
+  memberId              String
+  servantId             String
+  financialStatus       String?      // evaluative field
+  behaviorInService     String?      // evaluative field
+  integrationWithOthers String?      // evaluative field
+  notes                 String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  member                ServedMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  servant               User         @relation("ServantMemberEvaluations", fields: [servantId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, servantId])
+  @@map("member_evaluative_records")
+}
+
+// ----------------------------------------------------
+// Follow-Up (جدول المتابعة) & Absence Alerts
+// ----------------------------------------------------
+
+model FollowUpSession {
+  id          String   @id @default(uuid())
+  date        DateTime
+  title       String?
+  stageId     String?
+  sectorId    String?
+  sessionType String   @default("SERVICE") // SERVICE, MASS, MEETING, ACTIVITY
+  createdAt   DateTime @default(now())
+
+  records     FollowUpRecord[]
+
+  @@index([date, stageId])
+  @@map("follow_up_sessions")
+}
+
+model FollowUpRecord {
+  id           String             @id @default(uuid())
+  sessionId    String
+  targetType   FollowUpTargetType
+  targetId     String             // UserId or ServedMemberId
+  itemType     FollowUpItemType
+  attended     Boolean            @default(false)
+  notes        String?
+  recordedById String
+  date         DateTime
+  createdAt    DateTime           @default(now())
+
+  session      FollowUpSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([targetType, targetId, date])
+  @@index([sessionId])
+  @@map("follow_up_records")
+}
+
+model ConsecutiveAbsenceAlert {
+  id               String             @id @default(uuid())
+  targetType       FollowUpTargetType
+  targetId         String
+  consecutiveCount Int
+  responsibleId    String             // Servant or Secretary to be notified
+  stageId          String
+  resolved         Boolean            @default(false)
+  resolvedAt       DateTime?
+  createdAt        DateTime           @default(now())
+
+  @@index([responsibleId, resolved])
+  @@map("consecutive_absence_alerts")
+}
+
+// ----------------------------------------------------
+// Lesson Prep (التحضير)
+// ----------------------------------------------------
+
+model LessonPrep {
+  id                String     @id @default(uuid())
+  authorId          String
+  stageId           String
+  date              DateTime
+  topic             String
+  biblicalReference String?
+  objectivesJson    Json?      // string[]
+  content           String     @db.Text
+  attachmentUrls    Json?      // string[]
+  status            PrepStatus @default(SUBMITTED)
+  feedback          String?    @db.Text
+  reviewerId        String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  author            User       @relation("AuthorPreps", fields: [authorId], references: [id], onDelete: Cascade)
+  reviewer          User?      @relation("ReviewerPreps", fields: [reviewerId], references: [id], onDelete: SetNull)
+  stage             Stage      @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([stageId, date])
+  @@map("lesson_preps")
+}
+
+// ----------------------------------------------------
+// Private Spiritual Life Vault (Zero-Leak)
+// ----------------------------------------------------
+
+model SpiritualLifeEntry {
+  id                      String   @id @default(uuid())
+  userId                  String
+  date                    DateTime
+  hadCommunion            Boolean  @default(false)
+  hadConfession           Boolean  @default(false)
+  regularPrayer           Boolean  @default(false)
+  scriptureReadingMinutes Int      @default(0)
+  privateNotes            String?  @db.Text
+  createdAt               DateTime @default(now())
+
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId])
+  @@map("spiritual_life_entries")
+}
+
+// ----------------------------------------------------
+// Year Plan (تدبير السنة)
+// ----------------------------------------------------
+
+model YearPlanItem {
+  id           String           @id @default(uuid())
+  title        String
+  scopeType    ScopeType
+  scopeId      String           // stageId or sectorId or 'ORG'
+  date         DateTime
+  endDate      DateTime?
+  category     YearPlanCategory @default(ACTIVITY)
+  description  String?          @db.Text
+  createdById  String
+  isOfficial   Boolean          @default(true) // false if servant post (FR-7.4)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  author       User             @relation("AuthorPlanItems", fields: [createdById], references: [id], onDelete: Cascade)
+  signups      YearPlanSignup[]
+
+  @@index([scopeType, scopeId, date])
+  @@map("year_plan_items")
+}
+
+model YearPlanSignup {
+  id             String       @id @default(uuid())
+  yearPlanItemId String
+  userId         String
+  roleNotes      String?
+  signedUpAt     DateTime     @default(now())
+
+  planItem       YearPlanItem @relation(fields: [yearPlanItemId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([yearPlanItemId, userId])
+  @@map("year_plan_signups")
+}
+
+// ----------------------------------------------------
+// Supervision Notes
+// ----------------------------------------------------
+
+model PrivateNote {
+  id         String   @id @default(uuid())
+  subjectId  String   // User id of subject
+  authorId   String   // Supervisor user id
+  authorRole Role
+  content    String   @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  subject    User     @relation("SubjectNotes", fields: [subjectId], references: [id], onDelete: Cascade)
+  author     User     @relation("AuthorNotes", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([subjectId, authorId])
+  @@map("private_notes")
+}
+
+// ----------------------------------------------------
+// Polls
+// ----------------------------------------------------
+
+model Poll {
+  id          String       @id @default(uuid())
+  createdById String
+  scopeType   ScopeType
+  scopeId     String?      // StageId or SectorId or null for org
+  question    String
+  deadline    DateTime?
+  isClosed    Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+
+  creator     User         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  options     PollOption[]
+  votes       PollVote[]
+
+  @@map("polls")
+}
+
+model PollOption {
+  id        String     @id @default(uuid())
+  pollId    String
+  text      String
+  order     Int        @default(0)
+
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes     PollVote[]
+
+  @@map("poll_options")
+}
+
+model PollVote {
+  id        String     @id @default(uuid())
+  pollId    String
+  optionId  String
+  userId    String
+  votedAt   DateTime   @default(now())
+
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+  @@map("poll_votes")
+}
+
+// ----------------------------------------------------
+// Announcements & Audience Targeting
+// ----------------------------------------------------
+
+model Announcement {
+  id              String             @id @default(uuid())
+  authorId        String
+  authorRole      Role
+  title           String
+  content         String             @db.Text
+  targetScopeType ScopeType
+  targetScopeId   String?
+  targetRoles     Role[]
+  targetUserIds   String[]           @default([])
+  createdAt       DateTime           @default(now())
+
+  author          User               @relation("AuthorAnnouncements", fields: [authorId], references: [id], onDelete: Cascade)
+  readReceipts    AnnouncementRead[]
+
+  @@map("announcements")
+}
+
+model AnnouncementRead {
+  id             String       @id @default(uuid())
+  announcementId String
+  userId         String
+  readAt         DateTime     @default(now())
+
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@map("announcement_reads")
+}
+
+// ----------------------------------------------------
+// Notifications & Audit Trail
+// ----------------------------------------------------
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // ABSENCE_ALERT, ANNOUNCEMENT, PREP_REMINDER, GENERAL
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  action     String   // e.g. "EVALUATION_UPDATE", "EXPORT_REPORT", "TRANSFER_SERVANT"
+  entityType String
+  entityId   String
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  actor      User     @relation("ActorAuditLogs", fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([actorId, action, createdAt])
+  @@map("audit_logs")
+}
